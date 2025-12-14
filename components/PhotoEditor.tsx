@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Download, Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown, RotateCw, Share, Send } from 'lucide-react';
+import { Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown, RotateCw, Send } from 'lucide-react';
 import { Layer, LayerType, Project } from '../types';
 
 interface PhotoEditorProps {
