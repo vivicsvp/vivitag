@@ -1,0 +1,162 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Vivitag Bot</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              vip: {
+                black: '#09090b',
+                dark: '#121214',
+                border: '#27272a',
+                gray: '#a1a1aa',
+                // Vivi's Pink (Renamed contextually, keeping code ref for compatibility but treating as Pink)
+                green: '#F53C78', 
+                green_hover: '#D62560',
+                // Neon Green for gradient
+                neon: '#34d399',
+                red: '#f43f5e',
+                red_hover: '#e11d48',
+                glow: 'rgba(245, 60, 120, 0.5)'
+              }
+            },
+            fontFamily: {
+              sans: ['Outfit', 'sans-serif'],
+              inter: ['Inter', 'sans-serif'],
+              playwrite: ['"Playwrite US Trad"', 'cursive'],
+              montserrat: ['Montserrat', 'sans-serif'],
+            },
+            animation: {
+              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'fadeIn': 'fadeIn 0.5s ease-out forwards',
+              'spin-slow': 'spin 4s linear infinite',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Playwrite+US+Trad:wght@100..400&display=swap" rel="stylesheet">
+    <style>
+      body {
+        background-color: #09090b;
+        color: white;
+        font-family: 'Outfit', sans-serif;
+        overscroll-behavior: none;
+      }
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #121214;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #27272a;
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #34d399; /* Updated to Neon Green */
+      }
+      input[type=range] { -webkit-appearance: none; background: transparent; }
+      input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+        background: #34d399; cursor: pointer; margin-top: -6px; 
+        box-shadow: 0 0 10px rgba(52, 211, 153, 0.5); border: 2px solid #121214;
+      }
+      input[type=range]::-webkit-slider-runnable-track {
+        width: 100%; height: 4px; cursor: pointer; background: #27272a; border-radius: 2px;
+      }
+      input[type=number]::-webkit-inner-spin-button, 
+      input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+      /* GLASSHMORPHISM STYLES */
+      .glass-panel {
+        background: rgba(18, 18, 20, 0.6);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 
+          0 8px 32px rgba(0, 0, 0, 0.2),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .glass-btn-green {
+        background: rgba(16, 185, 129, 0.15); /* Transparent Green */
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border-radius: 12px;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        color: #34d399; /* Text Neon */
+        box-shadow: 
+          0 4px 12px rgba(0, 0, 0, 0.1),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          inset 0 0 10px rgba(52, 211, 153, 0.05);
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s ease;
+      }
+
+      .glass-btn-green:hover:not(:disabled) {
+        background: rgba(16, 185, 129, 0.25);
+        border-color: rgba(52, 211, 153, 0.5);
+        box-shadow: 
+          0 8px 24px rgba(0, 0, 0, 0.2),
+          inset 0 1px 0 rgba(255, 255, 255, 0.2),
+          0 0 20px rgba(52, 211, 153, 0.2); /* Outer Glow */
+        transform: translateY(-2px);
+        text-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+      }
+
+      .glass-btn-green:disabled {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.3);
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      /* Subtle highlight line at top */
+      .glass-btn-green::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.561.0",
+    "vite": "https://esm.sh/vite@^7.2.7",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

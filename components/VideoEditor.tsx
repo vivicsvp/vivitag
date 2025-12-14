@@ -1,0 +1,595 @@
+
+import React, { useRef, useEffect, useState } from 'react';
+import { Download, Play, Square, Video, Settings2, Copy, MonitorPlay, EyeOff, Type, Plus, Trash2, Layers, ChevronDown } from 'lucide-react';
+import { Project, VideoConfig, VideoTag } from '../types';
+
+interface VideoEditorProps {
+  project: Project;
+  onUpdate: (updatedProject: Project) => void;
+  onApplyAll: () => void;
+}
+
+const FONTS = [
+    { name: 'Padrão (Outfit)', value: 'Outfit' },
+    { name: 'Manual (Playwrite)', value: 'Playwrite US Trad' },
+    { name: 'Moderno (Montserrat)', value: 'Montserrat' },
+];
+
+interface PhysicsState {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+}
+
+const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const requestRef = useRef<number | null>(null);
+  
+  const [isRecording, setIsRecording] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [activeTab, setActiveTab] = useState<'visual' | 'effects'>('visual');
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [showFontDropdown, setShowFontDropdown] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  
+  // Physics state map: TagID -> Physics Properties
+  const physicsRef = useRef<Map<string, PhysicsState>>(new Map());
+
+  const { videoConfig } = project;
+
+  // Initialize selected tag
+  useEffect(() => {
+      if (videoConfig.tags.length > 0 && !selectedTagId) {
+          setSelectedTagId(videoConfig.tags[0].id);
+      }
+  }, [videoConfig.tags]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.src = URL.createObjectURL(project.file);
+      video.load();
+      video.onloadedmetadata = () => {
+          setDuration(video.duration);
+          if (videoConfig.trimEnd === 0) {
+              updateConfig({ trimEnd: video.duration });
+          }
+      };
+    }
+    return () => {
+        if (video && video.src) URL.revokeObjectURL(video.src);
+        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
+  }, [project.file]);
+
+  const updateConfig = (updates: Partial<VideoConfig>) => {
+      onUpdate({
+          ...project,
+          videoConfig: { ...project.videoConfig, ...updates }
+      });
+  };
+
+  const updateTag = (id: string, updates: Partial<VideoTag>) => {
+      const newTags = videoConfig.tags.map(t => t.id === id ? { ...t, ...updates } : t);
+      updateConfig({ tags: newTags });
+      
+      // Update physics velocity if speed changed
+      if (updates.speed !== undefined) {
+          const state = physicsRef.current.get(id);
+          if (state) {
+              const currentSpeed = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+              if (currentSpeed === 0) {
+                   state.vx = updates.speed;
+                   state.vy = updates.speed;
+              } else {
+                  state.vx = (state.vx / currentSpeed) * updates.speed;
+                  state.vy = (state.vy / currentSpeed) * updates.speed;
+              }
+          }
+      }
+  };
+
+  const addTag = () => {
+      const newTag: VideoTag = {
+          id: Date.now().toString(),
+          text: '@NovaTag',
+          color: '#ffffff',
+          fontSize: 40,
+          fontFamily: 'Outfit',
+          speed: 3,
+          opacity: 0.8
+      };
+      updateConfig({ tags: [...videoConfig.tags, newTag] });
+      setSelectedTagId(newTag.id);
+  };
+
+  const removeTag = (id: string) => {
+      const newTags = videoConfig.tags.filter(t => t.id !== id);
+      updateConfig({ tags: newTags });
+      physicsRef.current.delete(id);
+      if (selectedTagId === id) {
+          setSelectedTagId(newTags[0]?.id || null);
+          setShowFontDropdown(false);
+      }
+  };
+
+  const renderFrame = () => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    
+    if (canvas && video && !video.paused && !video.ended) {
+      
+      // Handle Trim Loop
+      if (!isRecording) {
+         if (video.currentTime >= videoConfig.trimEnd) {
+             video.currentTime = videoConfig.trimStart;
+         }
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.save();
+        
+        if (videoConfig.blurLevel > 0) {
+            ctx.filter = `blur(${videoConfig.blurLevel}px)`;
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        // Process Tags Physics and Rendering
+        videoConfig.tags.forEach(tag => {
+            let state = physicsRef.current.get(tag.id);
+            
+            // Initialize physics if missing
+            if (!state) {
+                state = {
+                    x: Math.random() * (canvas.width - 100),
+                    y: Math.random() * (canvas.height - 50) + 50,
+                    vx: (Math.random() > 0.5 ? 1 : -1) * tag.speed,
+                    vy: (Math.random() > 0.5 ? 1 : -1) * tag.speed
+                };
+                physicsRef.current.set(tag.id, state);
+            }
+
+            // Update Physics
+            state.x += state.vx;
+            state.y += state.vy;
+
+            // Measure Text
+            ctx.font = `bold ${tag.fontSize}px "${tag.fontFamily}", sans-serif`;
+            const metrics = ctx.measureText(tag.text);
+            const textWidth = metrics.width;
+            const textHeight = tag.fontSize;
+
+            // Bounce Logic
+            if (state.x + textWidth > canvas.width) {
+                state.x = canvas.width - textWidth;
+                state.vx = -Math.abs(state.vx);
+            } else if (state.x < 0) {
+                state.x = 0;
+                state.vx = Math.abs(state.vx);
+            }
+
+            if (state.y > canvas.height) {
+                state.y = canvas.height;
+                state.vy = -Math.abs(state.vy);
+            } else if (state.y < textHeight) {
+                state.y = textHeight;
+                state.vy = Math.abs(state.vy);
+            }
+
+            // Render Text
+            ctx.save();
+            ctx.globalAlpha = tag.opacity;
+            ctx.font = `bold ${tag.fontSize}px "${tag.fontFamily}", sans-serif`;
+            ctx.fillStyle = tag.color;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.fillText(tag.text, state.x, state.y);
+            ctx.restore();
+        });
+      }
+      requestRef.current = requestAnimationFrame(renderFrame);
+    }
+  };
+
+  const handlePlay = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && canvas) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      if (!isRecording && (video.currentTime < videoConfig.trimStart || video.currentTime >= videoConfig.trimEnd)) {
+          video.currentTime = videoConfig.trimStart;
+      }
+      
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+          playPromise.catch(() => {});
+      }
+      renderFrame();
+    }
+  };
+
+  const handlePause = () => {
+    videoRef.current?.pause();
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+  };
+
+  const startRecording = () => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    // Reset Physics for a clean start
+    physicsRef.current.clear();
+    
+    chunksRef.current = [];
+    
+    // Set Initial Time
+    video.currentTime = videoConfig.trimStart;
+
+    const stream = canvas.captureStream(30);
+    // Audio setup
+    const audioCtx = new AudioContext();
+    const dest = audioCtx.createMediaStreamDestination();
+    try {
+        const source = audioCtx.createMediaElementSource(video);
+        source.connect(dest);
+        const audioTrack = dest.stream.getAudioTracks()[0];
+        if (audioTrack) stream.addTrack(audioTrack);
+    } catch (e) {
+        // Ignore audio connect errors (already connected)
+    }
+
+    // Prepare Recorder
+    const mimeTypesToTry = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    let mediaRecorder: MediaRecorder | null = null;
+    let selectedMimeType = '';
+
+    for (const type of mimeTypesToTry) {
+        if (MediaRecorder.isTypeSupported(type)) {
+            mediaRecorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 25000000 });
+            selectedMimeType = type;
+            break;
+        }
+    }
+    if (!mediaRecorder) mediaRecorder = new MediaRecorder(stream);
+    
+    mediaRecorderRef.current = mediaRecorder;
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const isMp4 = selectedMimeType.includes('mp4');
+      const blob = new Blob(chunksRef.current, { type: isMp4 ? 'video/mp4' : 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vivitag-clip-${project.file.name.split('.')[0]}.${isMp4 ? 'mp4' : 'webm'}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setIsRecording(false);
+      handlePause();
+    };
+
+    mediaRecorder.start();
+    setIsRecording(true);
+    
+    video.play().catch(()=>{});
+    renderFrame();
+    
+    // Monitoring Loop - Fixed Logic
+    const monitorInterval = setInterval(() => {
+        // Stop monitoring if recorder is inactive (manual stop)
+        if (mediaRecorder?.state === 'inactive') {
+            clearInterval(monitorInterval);
+            return;
+        }
+
+        // Auto-stop at trim end or video end
+        // Added small buffer 0.1s to ensure we capture the end
+        if (video.currentTime >= videoConfig.trimEnd || video.ended) {
+            if (mediaRecorder?.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            clearInterval(monitorInterval);
+        }
+    }, 50); // Increased check frequency for better precision
+  };
+
+  const selectedTag = videoConfig.tags.find(t => t.id === selectedTagId);
+
+  return (
+    <div className="flex flex-col lg:flex-row lg:h-full gap-6">
+      {/* Canvas / Video Area */}
+      <div className="w-full flex-shrink-0 relative">
+         {/* Content */}
+         <div className="w-full h-full glass-panel rounded-2xl flex items-center justify-center p-4 relative m-[1px]">
+            <video ref={videoRef} className="hidden" muted={false} crossOrigin="anonymous" />
+            {/* Added styling to limit height on mobile so user can see there is more content below */}
+            <canvas ref={canvasRef} className="max-w-full max-h-[50vh] lg:max-h-[70vh] shadow-xl rounded-lg border border-black" />
+
+            {!videoRef.current?.src && (
+                <div className="text-vip-gray flex flex-col items-center animate-pulse py-12">
+                    <Video size={48} className="mb-2 opacity-30"/>
+                    <span className="text-sm font-medium tracking-wide">Carregando vídeo...</span>
+                </div>
+            )}
+         </div>
+      </div>
+
+      {/* Controls */}
+      <div className="w-full lg:w-96 flex flex-col glass-panel rounded-2xl h-auto lg:h-full lg:max-h-[85vh] overflow-visible lg:overflow-hidden">
+        
+        {/* Tabs */}
+        <div className="flex border-b border-vip-border bg-vip-dark/50 rounded-t-2xl">
+            <button 
+                onClick={() => setActiveTab('visual')}
+                className={`flex-1 p-3 text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${activeTab === 'visual' ? 'bg-vip-black text-vip-green border-b-2 border-vip-green' : 'text-vip-gray hover:text-white'}`}>
+                <Settings2 size={14} /> Tags & Visual
+            </button>
+            <button 
+                onClick={() => setActiveTab('effects')}
+                className={`flex-1 p-3 text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${activeTab === 'effects' ? 'bg-vip-black text-vip-green border-b-2 border-vip-green' : 'text-vip-gray hover:text-white'}`}>
+                <EyeOff size={14} /> Blur & Corte
+            </button>
+        </div>
+
+        {/* Scrollable controls area - On mobile, use auto height so page scrolls. On desktop, use internal scroll. */}
+        <div className="p-6 space-y-5 lg:overflow-y-auto lg:max-h-[60vh] scrollbar-thin">
+            
+            {activeTab === 'visual' && (
+                <>
+                   {/* Tags List Management */}
+                   <div className="flex justify-between items-center mb-2">
+                       <label className="text-xs font-bold text-vip-gray uppercase flex items-center gap-1">
+                           <Layers size={12}/> Tags Ativas
+                       </label>
+                       <button 
+                           onClick={addTag} 
+                           className="text-xs bg-vip-border hover:bg-vip-green hover:text-black text-white px-2 py-1 rounded transition-colors flex items-center gap-1">
+                           <Plus size={12}/> Nova
+                       </button>
+                   </div>
+                   
+                   <div className="flex flex-col gap-2 max-h-32 overflow-y-auto pr-1 mb-4 custom-scrollbar">
+                       {videoConfig.tags.map(tag => (
+                           <div 
+                               key={tag.id}
+                               onClick={() => setSelectedTagId(tag.id)}
+                               className={`flex items-center justify-between p-2 rounded-lg cursor-pointer border ${
+                                   selectedTagId === tag.id 
+                                   ? 'bg-vip-green/10 border-vip-green text-white' 
+                                   : 'bg-vip-black border-vip-border text-gray-400 hover:bg-vip-border/30'
+                               }`}
+                           >
+                               <span className="truncate text-sm font-medium" style={{ fontFamily: tag.fontFamily || 'Outfit' }}>
+                                   {tag.text}
+                               </span>
+                               <button 
+                                   onClick={(e) => { e.stopPropagation(); removeTag(tag.id); }}
+                                   className="text-gray-500 hover:text-red-400 p-1">
+                                   <Trash2 size={12} />
+                               </button>
+                           </div>
+                       ))}
+                       {videoConfig.tags.length === 0 && (
+                           <p className="text-xs text-center text-gray-500 py-2">Nenhuma tag adicionada.</p>
+                       )}
+                   </div>
+
+                    {selectedTag ? (
+                        <div className="animate-fadeIn space-y-4 border-t border-vip-border pt-4">
+                            <div className="relative">
+                                <label className="text-[10px] text-vip-gray uppercase font-bold absolute -top-2 left-2 bg-vip-dark px-1">Texto</label>
+                                <input 
+                                    type="text" 
+                                    value={selectedTag.text}
+                                    onChange={(e) => updateTag(selectedTag.id, { text: e.target.value })}
+                                    className="w-full bg-vip-black border border-vip-border rounded-lg p-3 text-sm focus:border-vip-green focus:outline-none focus:ring-1 focus:ring-vip-green/50 transition-all text-white"
+                                />
+                            </div>
+
+                            <div className={`relative ${showFontDropdown ? 'z-50' : 'z-0'}`}>
+                                <label className="text-[10px] text-vip-gray uppercase font-bold absolute -top-2 left-2 bg-vip-dark px-1 flex items-center gap-1"><Type size={10} /> Fonte</label>
+                                <button
+                                    onClick={() => setShowFontDropdown(!showFontDropdown)}
+                                    className="w-full bg-vip-black border border-vip-border rounded-lg p-3 text-sm flex items-center justify-between text-white focus:border-vip-green focus:outline-none"
+                                >
+                                    <span style={{ fontFamily: selectedTag.fontFamily || 'Outfit' }}>
+                                        {FONTS.find(f => f.value === (selectedTag.fontFamily || 'Outfit'))?.name}
+                                    </span>
+                                    <ChevronDown size={16} className={`transition-transform ${showFontDropdown ? 'rotate-180' : ''}`} />
+                                </button>
+                                
+                                {showFontDropdown && (
+                                    <div className="absolute top-full left-0 right-0 mt-1 bg-vip-dark border border-vip-border rounded-lg shadow-xl z-50 overflow-hidden">
+                                        {FONTS.map(f => (
+                                            <button
+                                                key={f.value}
+                                                onClick={() => {
+                                                    updateTag(selectedTag.id, { fontFamily: f.value });
+                                                    setShowFontDropdown(false);
+                                                }}
+                                                className="w-full text-left p-3 hover:bg-vip-green/10 hover:text-vip-green transition-colors text-white border-b border-white/5 last:border-0"
+                                                style={{ fontFamily: f.value }}
+                                            >
+                                                {f.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1">
+                                    <div className="flex justify-between text-xs text-vip-gray mb-1">
+                                        <span>Velocidade</span>
+                                        <span>{selectedTag.speed}x</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="1" max="15" step="1"
+                                        value={selectedTag.speed}
+                                        onChange={(e) => updateTag(selectedTag.id, { speed: Number(e.target.value) })}
+                                        className="w-full"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1">
+                                    <div className="flex justify-between text-xs text-vip-gray mb-1">
+                                        <span>Tamanho</span>
+                                        <span>{selectedTag.fontSize}px</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="20" max="150"
+                                        value={selectedTag.fontSize}
+                                        onChange={(e) => updateTag(selectedTag.id, { fontSize: Number(e.target.value) })}
+                                        className="w-full"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <div className="flex-1">
+                                     <div className="flex justify-between text-xs text-vip-gray mb-1">
+                                        <span>Opacidade</span>
+                                        <span>{Math.round(selectedTag.opacity * 100)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0.1" max="1" step="0.1"
+                                        value={selectedTag.opacity}
+                                        onChange={(e) => updateTag(selectedTag.id, { opacity: Number(e.target.value) })}
+                                        className="w-full"
+                                    />
+                                </div>
+                                <div className="flex flex-col justify-end">
+                                    <input 
+                                        type="color" 
+                                        value={selectedTag.color}
+                                        onChange={(e) => updateTag(selectedTag.id, { color: e.target.value })}
+                                        className="h-8 w-12 bg-transparent border border-vip-border rounded cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center p-4 border border-dashed border-vip-border rounded-lg text-gray-500 text-xs">
+                            Selecione uma tag para editar ou crie uma nova.
+                        </div>
+                    )}
+                </>
+            )}
+
+            {activeTab === 'effects' && (
+                <div className="space-y-6">
+                    <div>
+                        <div className="flex justify-between text-xs text-vip-gray mb-1">
+                            <span className="flex items-center gap-1"><EyeOff size={12}/> Blur Total (Fundo)</span>
+                            <span>{videoConfig.blurLevel}px</span>
+                        </div>
+                        <input 
+                            type="range" min="0" max="20" step="1"
+                            value={videoConfig.blurLevel}
+                            onChange={(e) => updateConfig({ blurLevel: Number(e.target.value) })}
+                            className="w-full"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-1">Aplica desfoque em todo o vídeo, útil para usar como fundo de stories.</p>
+                    </div>
+
+                    <div className="border-t border-vip-border pt-4">
+                        <h3 className="text-xs font-bold text-white mb-4 uppercase">Corte do Vídeo</h3>
+                        
+                        <div>
+                            <div className="flex justify-between text-xs text-vip-gray mb-1">
+                                <span>Início</span>
+                                <span>{videoConfig.trimStart.toFixed(1)}s</span>
+                            </div>
+                            <input 
+                                type="range" min="0" max={duration} step="0.1"
+                                value={videoConfig.trimStart}
+                                onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    if (val < videoConfig.trimEnd) updateConfig({ trimStart: val });
+                                }}
+                                className="w-full"
+                            />
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="flex justify-between text-xs text-vip-gray mb-1">
+                                <span>Fim</span>
+                                <span>{videoConfig.trimEnd.toFixed(1)}s</span>
+                            </div>
+                            <input 
+                                type="range" min="0" max={duration} step="0.1"
+                                value={videoConfig.trimEnd}
+                                onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    if (val > videoConfig.trimStart) updateConfig({ trimEnd: val });
+                                }}
+                                className="w-full"
+                            />
+                        </div>
+                        
+                        <div className="mt-2 bg-vip-black p-2 rounded border border-vip-border text-center">
+                             <span className="text-xs text-gray-400">Duração: </span>
+                             <span className="text-vip-green font-bold text-sm">{(videoConfig.trimEnd - videoConfig.trimStart).toFixed(1)}s</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+        
+        {/* Footer Actions */}
+        <div className="p-4 border-t border-vip-border mt-auto bg-vip-dark rounded-b-2xl">
+            <button 
+                onClick={onApplyAll}
+                className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-vip-border/50 p-2 rounded-lg transition-colors font-semibold text-xs text-vip-gray border border-vip-border border-dashed mb-3">
+                <Copy size={14} /> Replicar Config para TODOS
+            </button>
+
+            <div className="grid grid-cols-2 gap-3 mb-3">
+                <button 
+                    onClick={handlePlay}
+                    disabled={isRecording}
+                    className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-colors font-bold text-sm text-white border border-white/5">
+                    <Play size={16} className="text-vip-green"/> Preview
+                </button>
+                <button 
+                    onClick={handlePause}
+                    className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-colors font-bold text-sm text-white border border-white/5">
+                    <Square size={16} /> Pause
+                </button>
+            </div>
+
+            <button 
+                onClick={isRecording ? () => mediaRecorderRef.current?.stop() : startRecording}
+                className={`w-full flex items-center justify-center gap-2 p-4 rounded-xl font-bold transition-all z-10 
+                    ${isRecording 
+                        ? 'bg-vip-red hover:bg-red-500 animate-pulse shadow-red-900/50' 
+                        : 'glass-btn-green'}`}
+            >
+                {isRecording ? (
+                    <> <Square size={20} fill="currentColor" /> PARAR GRAVAÇÃO </>
+                ) : (
+                    <> <MonitorPlay size={20} /> GRAVAR & BAIXAR </>
+                )}
+            </button>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+export default VideoEditor;
