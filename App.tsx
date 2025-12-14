@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Video as VideoIcon, FileIcon, X, Plus, Archive, Copy, LayoutDashboard, Settings, Heart, Download, Home, Lock, KeyRound, ArrowRight, Loader2 } from 'lucide-react';
+import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Download, Home, KeyRound, ArrowRight, Loader2 } from 'lucide-react';
 import PhotoEditor from './components/PhotoEditor';
 import VideoEditor from './components/VideoEditor';
 import { AppMode, Project, LayerType } from './types';
