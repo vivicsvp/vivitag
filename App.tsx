@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Download, Home, KeyRound, ArrowRight, Loader2, Share } from 'lucide-react';
+import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Download, Home, KeyRound, ArrowRight, Loader2, Share, Send } from 'lucide-react';
 import PhotoEditor from './components/PhotoEditor';
 import VideoEditor from './components/VideoEditor';
 import { AppMode, Project, LayerType } from './types';
@@ -382,14 +382,14 @@ const App: React.FC = () => {
                                 ${isDownloading 
                                     ? 'bg-vip-neon/20 text-vip-neon border-vip-neon/50 cursor-wait' 
                                     : 'text-vip-neon hover:text-white hover:bg-vip-neon/10 border-vip-neon/20 hover:border-vip-neon/50'}`}
-                            title="Baixar Todas"
+                            title="Enviar Todas"
                         >
                             {isDownloading ? (
                                 <Loader2 size={18} className="animate-spin" /> 
                             ) : (
-                                <Share size={18} /> 
+                                <Send size={18} /> 
                             )}
-                            <span className="hidden sm:inline">{isDownloading ? 'Processando...' : 'Baixar Tudo'}</span>
+                            <span className="hidden sm:inline">{isDownloading ? 'Processando...' : 'Enviar Tudo'}</span>
                         </button>
                     )}
 
@@ -487,8 +487,8 @@ const App: React.FC = () => {
                         onClick={downloadAllPhotos}
                         disabled={isDownloading}
                         className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold uppercase tracking-wider bg-vip-border/50 hover:bg-vip-border hover:text-white rounded-lg text-vip-gray border border-vip-border transition-all disabled:opacity-50">
-                        {isDownloading ? <Loader2 size={14} className="animate-spin"/> : <Share size={14} />} 
-                        {isDownloading ? 'Processando...' : 'Baixar/Enviar Tudo'}
+                        {isDownloading ? <Loader2 size={14} className="animate-spin"/> : <Send size={14} />} 
+                        {isDownloading ? 'Processando...' : 'Enviar Tudo'}
                     </button>
                 </div>
 

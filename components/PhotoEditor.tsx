@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Download, Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown, RotateCw, Share } from 'lucide-react';
+import { Download, Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown, RotateCw, Share, Send } from 'lucide-react';
 import { Layer, LayerType, Project } from '../types';
 
 interface PhotoEditorProps {
@@ -554,18 +554,23 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
             </div>
         )}
 
-        <button 
-            onClick={downloadImage}
-            disabled={!baseImage || isProcessing}
-            className={`mt-auto w-full flex items-center justify-center gap-2 p-4 font-bold transition-all z-10 glass-btn-green ${isProcessing ? 'opacity-50 cursor-wait' : ''}`}>
-            {isProcessing ? (
-                <>Processando...</>
-            ) : (
-                <>
-                    <Share size={20} /> ENVIAR / BAIXAR
-                </>
-            )}
-        </button>
+        <div className="mt-auto w-full flex flex-col items-center">
+            <span className="text-[10px] text-vip-gray mb-1 opacity-80">
+                Abre o compartilhamento do Telegram
+            </span>
+            <button 
+                onClick={downloadImage}
+                disabled={!baseImage || isProcessing}
+                className={`w-full flex items-center justify-center gap-2 p-4 font-bold transition-all z-10 glass-btn-green ${isProcessing ? 'opacity-50 cursor-wait' : ''}`}>
+                {isProcessing ? (
+                    <>Processando...</>
+                ) : (
+                    <>
+                        <Send size={20} /> ENVIAR PARA TELEGRAM
+                    </>
+                )}
+            </button>
+        </div>
 
       </div>
     </div>

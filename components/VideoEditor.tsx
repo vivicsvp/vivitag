@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Square, Video, Settings2, Copy, MonitorPlay, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Share } from 'lucide-react';
+import { Play, Square, Video, Settings2, Copy, MonitorPlay, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Share, Send } from 'lucide-react';
 import { Project, VideoConfig, VideoTag } from '../types';
 
 interface VideoEditorProps {
@@ -610,7 +610,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
                 ) : isProcessing ? (
                     <>PROCESSANDO...</>
                 ) : (
-                    <> <Share size={20} /> GRAVAR E ENVIAR </>
+                    <> <Send size={20} /> GRAVAR E ENVIAR </>
                 )}
             </button>
         </div>
