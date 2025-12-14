@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Square, Video, Settings2, Copy, MonitorPlay, EyeOff, Type, Plus, Trash2, Layers, ChevronDown } from 'lucide-react';
+import { Play, Square, Video, Settings2, Copy, MonitorPlay, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Share } from 'lucide-react';
 import { Project, VideoConfig, VideoTag } from '../types';
 
 interface VideoEditorProps {
@@ -28,6 +28,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
   const requestRef = useRef<number | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [duration, setDuration] = useState(0);
   const [activeTab, setActiveTab] = useState<'visual' | 'effects'>('visual');
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -267,16 +268,41 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
 
-    mediaRecorder.onstop = () => {
+    mediaRecorder.onstop = async () => {
+      setIsProcessing(true);
       const isMp4 = selectedMimeType.includes('mp4');
       const blob = new Blob(chunksRef.current, { type: isMp4 ? 'video/mp4' : 'video/webm' });
+      
+      const fileName = `vivitag-clip-${project.file.name.split('.')[0]}.${isMp4 ? 'mp4' : 'webm'}`;
+      const file = new File([blob], fileName, { type: isMp4 ? 'video/mp4' : 'video/webm' });
+
+      // Tentar Compartilhamento Nativo (iOS/Android)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+              await navigator.share({
+                  files: [file],
+                  title: 'Vivitag Vídeo',
+                  text: 'Seu vídeo editado!'
+              });
+              setIsRecording(false);
+              setIsProcessing(false);
+              handlePause();
+              return;
+          } catch (e) {
+              console.log("Share cancelado", e);
+          }
+      }
+
+      // Fallback
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `vivitag-clip-${project.file.name.split('.')[0]}.${isMp4 ? 'mp4' : 'webm'}`;
+      a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
+      
       setIsRecording(false);
+      setIsProcessing(false);
       handlePause();
     };
 
@@ -286,23 +312,20 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
     video.play().catch(()=>{});
     renderFrame();
     
-    // Monitoring Loop - Fixed Logic
+    // Monitoring Loop
     const monitorInterval = setInterval(() => {
-        // Stop monitoring if recorder is inactive (manual stop)
         if (mediaRecorder?.state === 'inactive') {
             clearInterval(monitorInterval);
             return;
         }
-
-        // Auto-stop at trim end or video end
-        // Added small buffer 0.1s to ensure we capture the end
+        // Auto-stop at trim end
         if (video.currentTime >= videoConfig.trimEnd || video.ended) {
             if (mediaRecorder?.state === 'recording') {
                 mediaRecorder.stop();
             }
             clearInterval(monitorInterval);
         }
-    }, 50); // Increased check frequency for better precision
+    }, 50);
   };
 
   const selectedTag = videoConfig.tags.find(t => t.id === selectedTagId);
@@ -574,15 +597,20 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
 
             <button 
                 onClick={isRecording ? () => mediaRecorderRef.current?.stop() : startRecording}
+                disabled={isProcessing}
                 className={`w-full flex items-center justify-center gap-2 p-4 rounded-xl font-bold transition-all z-10 
                     ${isRecording 
                         ? 'bg-vip-red hover:bg-red-500 animate-pulse shadow-red-900/50' 
-                        : 'glass-btn-green'}`}
+                        : isProcessing 
+                            ? 'opacity-50 cursor-wait bg-vip-border'
+                            : 'glass-btn-green'}`}
             >
                 {isRecording ? (
                     <> <Square size={20} fill="currentColor" /> PARAR GRAVAÇÃO </>
+                ) : isProcessing ? (
+                    <>PROCESSANDO...</>
                 ) : (
-                    <> <MonitorPlay size={20} /> GRAVAR & BAIXAR </>
+                    <> <Share size={20} /> GRAVAR E ENVIAR </>
                 )}
             </button>
         </div>

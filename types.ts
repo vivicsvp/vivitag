@@ -17,6 +17,7 @@ export interface Layer {
   y: number;
   scale: number;
   opacity: number;
+  rotation?: number; // Rotation in degrees
   color?: string; // For text
   fontSize?: number; // For text
   fontFamily?: string; // For text

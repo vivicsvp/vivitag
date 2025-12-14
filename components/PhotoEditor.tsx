@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Download, Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown } from 'lucide-react';
+import { Download, Plus, Trash2, Type as TypeIcon, Copy, Layers, Grid3X3, RotateCcw, ChevronDown, RotateCw, Share } from 'lucide-react';
 import { Layer, LayerType, Project } from '../types';
 
 interface PhotoEditorProps {
@@ -20,6 +20,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
   const [baseImage, setBaseImage] = useState<HTMLImageElement | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [showFontDropdown, setShowFontDropdown] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Initialize with a default layer if empty
   useEffect(() => {
@@ -49,6 +50,14 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
 
     project.layers.forEach(layer => {
       ctx.save();
+      
+      // Move context to layer position for rotation/scaling
+      ctx.translate(layer.x, layer.y);
+      
+      if (layer.rotation) {
+          ctx.rotate((layer.rotation * Math.PI) / 180);
+      }
+      
       ctx.globalAlpha = layer.opacity;
       
       if (layer.type === LayerType.TEXT) {
@@ -59,7 +68,8 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'center';
         
-        ctx.fillText(layer.content as string, layer.x, layer.y);
+        // Draw at 0,0 because we translated
+        ctx.fillText(layer.content as string, 0, 0);
       }
       ctx.restore();
     });
@@ -79,10 +89,9 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
 
-      // Simple hit detection
+      // Simple hit detection (works best for non-rotated, but acceptable for simple usage)
       const clickedLayer = project.layers.slice().reverse().find(layer => {
           if (layer.type === LayerType.TEXT) {
-              // Approx hit box
               const size = layer.fontSize || 20;
               const len = (layer.content as string).length * (size * 0.5);
               return x >= layer.x - len && x <= layer.x + len && y >= layer.y - size && y <= layer.y + size;
@@ -96,7 +105,6 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
           dragStart.current = { x, y };
       } else {
           setSelectedLayerId(null);
-          // Close font dropdown if open when clicking canvas
           setShowFontDropdown(false);
       }
   };
@@ -127,7 +135,6 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       isDragging.current = false;
   };
 
-  // Add touch support for dragging on mobile
   const handleTouchStart = (e: React.TouchEvent) => {
       const touch = e.touches[0];
       const canvas = canvasRef.current;
@@ -152,11 +159,8 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
           setSelectedLayerId(clickedLayer.id);
           isDragging.current = true;
           dragStart.current = { x, y };
-          // Prevent scrolling while dragging
           if (e.cancelable) e.preventDefault();
       } else {
-           // Don't deselect immediately on touch to allow scrolling if missed
-           // But if we want to be consistent with mouse:
            setSelectedLayerId(null);
            setShowFontDropdown(false);
       }
@@ -168,7 +172,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      if (e.cancelable) e.preventDefault(); // Prevent scrolling
+      if (e.cancelable) e.preventDefault(); 
 
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
@@ -197,6 +201,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       y: baseImage.height / 2,
       scale: 1,
       opacity: 1,
+      rotation: 0,
       fontSize: baseImage.width * 0.05,
       color: '#ffffff',
       fontFamily: 'Outfit'
@@ -208,7 +213,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
     setSelectedLayerId(newLayer.id);
   };
 
-  // Scatter Logic: Centers tags in grid cells with controlled jitter for even distribution
+  // Scatter Logic with Default Rotation
   const scatterTags = (count: number) => {
       if (!baseImage) return;
 
@@ -221,23 +226,20 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       const opacity = templateLayer?.opacity || 0.5;
       const fontSize = templateLayer?.fontSize || baseImage.width * 0.05;
       const fontFamily = templateLayer?.fontFamily || 'Outfit';
+      
+      // Default watermark rotation: -30 degrees
+      const rotation = templateLayer?.rotation !== undefined ? templateLayer.rotation : -30;
 
       const newLayers: Layer[] = [];
       
       const aspectRatio = baseImage.width / baseImage.height;
-      
-      // Calculate optimized grid
-      // Force at least 2 columns if count >= 4 to avoid vertical stacking in portrait
       let cols = Math.round(Math.sqrt(count * aspectRatio));
       if (cols < 2 && count >= 4) cols = 2;
-      
-      // Calculate rows to ensure we have enough cells
       const rows = Math.ceil(count / cols);
       
       const cellWidth = baseImage.width / cols;
       const cellHeight = baseImage.height / rows;
 
-      // Generate all cell indices
       const cells = [];
       for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
@@ -245,19 +247,13 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
           }
       }
       
-      // Shuffle cells for random placement order
       for (let i = cells.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [cells[i], cells[j]] = [cells[j], cells[i]];
       }
 
-      // Fill the cells
       for (let i = 0; i < count; i++) {
           const { r, c } = cells[i % cells.length];
-          
-          // Position: Center of cell + Jitter
-          // Jitter allows movement up to 25% of cell size in any direction from center
-          // This keeps it well within the cell but not robotic
           const jitterX = (Math.random() - 0.5) * cellWidth * 0.5;
           const jitterY = (Math.random() - 0.5) * cellHeight * 0.5;
 
@@ -272,6 +268,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
               y: y,
               scale: 1,
               opacity: opacity,
+              rotation: rotation,
               color: color,
               fontSize: fontSize,
               fontFamily: fontFamily
@@ -303,10 +300,46 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
   const downloadImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const link = document.createElement('a');
-    link.download = `tagged-${project.file.name.split('.')[0]}.jpg`; 
-    link.href = canvas.toDataURL('image/jpeg', 1.0); 
-    link.click();
+    
+    setIsProcessing(true);
+
+    canvas.toBlob(async (blob) => {
+        if (!blob) {
+            setIsProcessing(false);
+            return;
+        }
+
+        const fileName = `tagged-${project.file.name.split('.')[0]}.jpg`;
+        const file = new File([blob], fileName, { type: 'image/jpeg' });
+
+        // Tentar Compartilhamento Nativo (iOS/Android)
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+                await navigator.share({
+                    files: [file],
+                    title: 'Vivitag Imagem',
+                    text: 'Sua imagem editada'
+                });
+                setIsProcessing(false);
+                return; // Sucesso no compartilhamento
+            } catch (error) {
+                console.log("Erro ao compartilhar ou cancelado pelo usuário:", error);
+                // Continua para o download tradicional caso falhe
+            }
+        }
+
+        // Fallback para Download Clássico (Desktop / Android antigo)
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+        setIsProcessing(false);
+
+    }, 'image/jpeg', 0.95);
   };
 
   const selectedLayer = project.layers.find(l => l.id === selectedLayerId);
@@ -350,7 +383,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
         <div className="bg-vip-black/50 p-3 rounded-xl border border-vip-border/50">
              <div className="flex items-center justify-between mb-2">
                  <label className="text-[10px] text-vip-gray uppercase font-bold flex items-center gap-1">
-                     <Grid3X3 size={12}/> Multi-Tags (Dispersão)
+                     <Grid3X3 size={12}/> Multi-Tags (Grade -30°)
                  </label>
                  <button 
                      onClick={clearLayers}
@@ -370,7 +403,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
                  ))}
              </div>
              <p className="text-[10px] text-gray-500 mt-2 text-center">
-                 Distribui {selectedLayer ? 'cópias da tag selecionada' : 'tags padrão'} uniformemente por toda a imagem.
+                 Cria grade automática com rotação de marca d'água.
              </p>
         </div>
 
@@ -458,6 +491,22 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
                             </div>
                         )}
                     </div>
+
+                    {/* Rotation Control */}
+                    <div>
+                        <div className="flex justify-between text-xs text-vip-gray mb-1">
+                            <span className="flex items-center gap-1"><RotateCw size={10}/> Rotação</span>
+                            <span>{Math.round(selectedLayer.rotation || 0)}°</span>
+                        </div>
+                        <input 
+                            type="range" 
+                            min="-180" 
+                            max="180" 
+                            value={selectedLayer.rotation || 0} 
+                            onChange={(e) => updateLayer(selectedLayer.id, { rotation: Number(e.target.value) })}
+                            className="w-full"
+                        />
+                    </div>
                     
                     <div className="flex gap-3 items-center">
                         <input 
@@ -507,9 +556,15 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
 
         <button 
             onClick={downloadImage}
-            disabled={!baseImage}
-            className="mt-auto w-full flex items-center justify-center gap-2 glass-btn-green p-4 font-bold transition-all z-10">
-            <Download size={20} /> BAIXAR JPG
+            disabled={!baseImage || isProcessing}
+            className={`mt-auto w-full flex items-center justify-center gap-2 p-4 font-bold transition-all z-10 glass-btn-green ${isProcessing ? 'opacity-50 cursor-wait' : ''}`}>
+            {isProcessing ? (
+                <>Processando...</>
+            ) : (
+                <>
+                    <Share size={20} /> ENVIAR / BAIXAR
+                </>
+            )}
         </button>
 
       </div>

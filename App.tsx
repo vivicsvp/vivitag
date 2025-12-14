@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Download, Home, KeyRound, ArrowRight, Loader2 } from 'lucide-react';
+import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Download, Home, KeyRound, ArrowRight, Loader2, Share } from 'lucide-react';
 import PhotoEditor from './components/PhotoEditor';
 import VideoEditor from './components/VideoEditor';
 import { AppMode, Project, LayerType } from './types';
@@ -181,13 +181,16 @@ const App: React.FC = () => {
       const photoProjects = projects.filter(p => p.type === AppMode.PHOTO);
       if (photoProjects.length === 0) return;
 
-      const confirmed = await showConfirm(`Baixar ${photoProjects.length} imagens separadamente?\n\nImportante: Se o navegador pedir permissão para baixar vários arquivos, clique em 'Permitir'.`);
+      // Mensagem diferente para indicar que vai abrir o compartilhamento
+      const confirmed = await showConfirm(`Processar ${photoProjects.length} imagens?\n\nNo celular, isso abrirá a opção 'Compartilhar' para enviar direto para o Telegram.`);
       
       if (!confirmed) return;
       
       setIsDownloading(true);
+      const generatedFiles: File[] = [];
       
       try {
+        // 1. Gerar todos os arquivos (Blobs) primeiro
         for (let i = 0; i < photoProjects.length; i++) {
             const proj = photoProjects[i];
             await new Promise<void>((resolve) => {
@@ -202,43 +205,72 @@ const App: React.FC = () => {
                         ctx.drawImage(img, 0, 0);
                         proj.layers.forEach(layer => {
                             ctx.save();
+                            ctx.translate(layer.x, layer.y);
+                            if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180);
                             ctx.globalAlpha = layer.opacity;
                             if (layer.type === LayerType.TEXT) {
-                                const fontFamily = layer.fontFamily || 'Inter';
+                                const fontFamily = layer.fontFamily || 'Outfit';
                                 ctx.font = `bold ${layer.fontSize}px "${fontFamily}", sans-serif`;
                                 ctx.fillStyle = layer.color || '#ffffff';
                                 ctx.textBaseline = 'middle';
                                 ctx.textAlign = 'center';
-                                ctx.fillText(layer.content as string, layer.x, layer.y);
+                                ctx.fillText(layer.content as string, 0, 0);
                             }
                             ctx.restore();
                         });
                         
-                        // Use Blob for better compatibility
                         canvas.toBlob((blob) => {
                              if (blob) {
-                                  const url = URL.createObjectURL(blob);
-                                  const link = document.createElement('a');
-                                  link.download = `tagged-${proj.file.name.split('.')[0]}.jpg`;
-                                  link.href = url;
-                                  document.body.appendChild(link);
-                                  link.click();
-                                  document.body.removeChild(link);
-                                  setTimeout(() => URL.revokeObjectURL(url), 100);
+                                  const cleanName = proj.file.name.replace(/\.[^/.]+$/, "");
+                                  const fileName = `tagged-${cleanName}-${i}.jpg`;
+                                  // Criar objeto File para compartilhamento
+                                  const file = new File([blob], fileName, { type: 'image/jpeg' });
+                                  generatedFiles.push(file);
                              }
                              resolve();
-                        }, 'image/jpeg', 1.0);
+                        }, 'image/jpeg', 0.95);
                     } else {
                         resolve();
                     }
                 };
                 img.onerror = () => resolve();
             });
-            // Delay to prevent browser blocking sequential downloads
-            await new Promise(r => setTimeout(r, 800));
+            // Pequeno delay para UI não travar
+            await new Promise(r => setTimeout(r, 50));
         }
+
+        // 2. Tentar Compartilhamento Nativo (Batch Share) - Funciona no iOS 15+ e Android recente
+        if (generatedFiles.length > 0 && navigator.canShare && navigator.canShare({ files: generatedFiles })) {
+            try {
+                 await navigator.share({
+                     files: generatedFiles,
+                     title: 'Vivitag Imagens',
+                     text: `Aqui estão suas ${generatedFiles.length} imagens editadas!`
+                 });
+                 // Se deu certo, paramos aqui.
+                 setIsDownloading(false);
+                 return;
+            } catch (e) {
+                console.log("Compartilhamento cancelado ou falhou, tentando download manual...", e);
+                // Se falhar (ex: usuário cancelou), cai para o fallback abaixo
+            }
+        }
+
+        // 3. Fallback: Download Individual (Loop) - Para Desktop ou Android antigo
+        for (const file of generatedFiles) {
+             const url = URL.createObjectURL(file);
+             const link = document.createElement('a');
+             link.download = file.name;
+             link.href = url;
+             document.body.appendChild(link);
+             link.click();
+             document.body.removeChild(link);
+             setTimeout(() => URL.revokeObjectURL(url), 100);
+             await new Promise(r => setTimeout(r, 800)); // Delay entre downloads
+        }
+
       } catch (e) {
-          console.error("Download Error", e);
+          console.error("Erro no processamento", e);
       } finally {
           setIsDownloading(false);
       }
@@ -350,14 +382,14 @@ const App: React.FC = () => {
                                 ${isDownloading 
                                     ? 'bg-vip-neon/20 text-vip-neon border-vip-neon/50 cursor-wait' 
                                     : 'text-vip-neon hover:text-white hover:bg-vip-neon/10 border-vip-neon/20 hover:border-vip-neon/50'}`}
-                            title="Baixar Todas (Sem ZIP)"
+                            title="Baixar Todas"
                         >
                             {isDownloading ? (
                                 <Loader2 size={18} className="animate-spin" /> 
                             ) : (
-                                <Download size={18} /> 
+                                <Share size={18} /> 
                             )}
-                            <span className="hidden sm:inline">{isDownloading ? 'Baixando...' : 'Baixar Tudo'}</span>
+                            <span className="hidden sm:inline">{isDownloading ? 'Processando...' : 'Baixar Tudo'}</span>
                         </button>
                     )}
 
@@ -455,8 +487,8 @@ const App: React.FC = () => {
                         onClick={downloadAllPhotos}
                         disabled={isDownloading}
                         className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold uppercase tracking-wider bg-vip-border/50 hover:bg-vip-border hover:text-white rounded-lg text-vip-gray border border-vip-border transition-all disabled:opacity-50">
-                        {isDownloading ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
-                        {isDownloading ? 'Baixando...' : 'Baixar Todas (Sem ZIP)'}
+                        {isDownloading ? <Loader2 size={14} className="animate-spin"/> : <Share size={14} />} 
+                        {isDownloading ? 'Processando...' : 'Baixar/Enviar Tudo'}
                     </button>
                 </div>
 
