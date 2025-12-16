@@ -21,13 +21,38 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [showFontDropdown, setShowFontDropdown] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Guard against strict mode double-initialization
+  const initializationRef = useRef(false);
 
-  // Initialize with a default layer if empty
+  // Initialize with a default layer only ONCE per project lifecycle
   useEffect(() => {
-    if (project.layers.length === 0 && baseImage) {
-        addTextLayer('@SeuCanal');
-    }
-  }, [baseImage]);
+    // If already initialized (state) OR currently initializing (ref), skip.
+    if (project.initialized || !baseImage || initializationRef.current) return;
+    
+    initializationRef.current = true; // Lock immediately
+
+    const newLayer: Layer = {
+      id: Date.now().toString() + Math.random(),
+      type: LayerType.TEXT,
+      content: '@SeuCanal',
+      x: baseImage.width / 2,
+      y: baseImage.height / 2,
+      scale: 1,
+      opacity: 1,
+      rotation: 0,
+      fontSize: baseImage.width * 0.05,
+      color: '#ffffff',
+      fontFamily: 'Outfit'
+    };
+
+    onUpdate({
+        ...project,
+        layers: [newLayer],
+        initialized: true
+    });
+    setSelectedLayerId(newLayer.id);
+  }, [baseImage, project.initialized]); // Only run when image loads or init state changes
 
   useEffect(() => {
     const img = new Image();
@@ -217,9 +242,10 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
   const scatterTags = (count: number) => {
       if (!baseImage) return;
 
+      // Try to get style from selected layer, or fallback to the first layer available
       const templateLayer = selectedLayerId 
           ? project.layers.find(l => l.id === selectedLayerId) 
-          : null;
+          : (project.layers.length > 0 ? project.layers[0] : null);
 
       const text = templateLayer ? (templateLayer.content as string) : '@SeuCanal';
       const color = templateLayer?.color || '#ffffff';
@@ -275,10 +301,16 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
           });
       }
 
+      // REPLACE all layers with new grid to prevent duplication/stacking
       onUpdate({
           ...project,
-          layers: [...project.layers, ...newLayers]
+          layers: newLayers
       });
+      
+      // Auto-select the first new layer
+      if (newLayers.length > 0) {
+          setSelectedLayerId(newLayers[0].id);
+      }
   };
 
   const clearLayers = () => {
@@ -347,7 +379,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
   return (
     <div className="flex flex-col lg:flex-row lg:h-full gap-4 lg:gap-6">
       {/* Canvas Area */}
-      <div className="w-full lg:flex-1 relative shrink-0 min-h-[50vh] lg:min-h-auto">
+      <div className="w-full lg:flex-1 relative min-h-[50vh] lg:min-h-auto flex items-center justify-center">
          {/* Content */}
          <div className="w-full h-full glass-panel rounded-2xl flex items-center justify-center p-2 md:p-8 relative m-[1px]">
              <div className="relative max-w-full max-h-full overflow-auto shadow-2xl border border-black/50 rounded flex items-center justify-center">
@@ -368,7 +400,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       </div>
 
       {/* Controls Sidebar */}
-      <div className="w-full lg:w-96 flex flex-col gap-5 glass-panel p-4 md:p-6 rounded-2xl h-fit lg:max-h-[85vh] overflow-y-auto scrollbar-thin">
+      <div className="w-full lg:w-96 flex-shrink-0 flex flex-col gap-5 glass-panel p-4 md:p-6 rounded-2xl h-fit lg:max-h-[85vh] overflow-y-auto scrollbar-thin">
         
         {/* Actions */}
         <div className="grid grid-cols-1 gap-3">
@@ -392,7 +424,7 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
                  </button>
              </div>
              <div className="grid grid-cols-4 gap-2">
-                 {[5, 10, 15, 20].map(count => (
+                 {[2, 5, 10, 15].map(count => (
                      <button
                         key={count}
                         onClick={() => scatterTags(count)}

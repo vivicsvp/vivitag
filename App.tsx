@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Home, KeyRound, ArrowRight, Loader2, Send } from 'lucide-react';
+import { Upload, Image as ImageIcon, Video as VideoIcon, X, Plus, LayoutDashboard, Home, KeyRound, ArrowRight, Loader2, Send, Copy, Layers, PlayCircle } from 'lucide-react';
 import PhotoEditor from './components/PhotoEditor';
 import VideoEditor from './components/VideoEditor';
-import { AppMode, Project, LayerType } from './types';
+import { AppMode, Project, LayerType, VideoTag } from './types';
 
 // SENHA DE ACESSO: Agora pega da Vercel (Environment Variable) ou usa um fallback seguro
 const ACCESS_KEY = process.env.APP_PASSWORD || "vivivip";
@@ -13,6 +13,9 @@ const App: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+
+  // Batch Processing State
+  const [batchQueueIndex, setBatchQueueIndex] = useState<number | null>(null);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -97,15 +100,17 @@ const App: React.FC = () => {
               id: Date.now().toString() + Math.random(),
               file: file,
               type: isVideo ? AppMode.VIDEO : AppMode.PHOTO,
+              // Videos are initialized immediately with tags. Photos wait for PhotoEditor to measure image size.
+              initialized: isVideo ? true : false,
               layers: [],
               videoConfig: { 
                   tags: isVideo ? [{
-                      id: 'default-tag',
+                      id: 'default-tag-' + Math.random(),
                       text: '@SeuCanal',
                       color: '#ffffff',
-                      fontSize: 40,
-                      fontFamily: 'Inter',
-                      speed: 3,
+                      fontSize: 35,
+                      fontFamily: 'Montserrat',
+                      speed: 4,
                       opacity: 0.8
                   }] : [],
                   blurLevel: 0,
@@ -145,19 +150,41 @@ const App: React.FC = () => {
     if (confirmed) {
         setProjects([]);
         setActiveIndex(0);
+        setBatchQueueIndex(null);
     }
   };
 
+  // --- REPLICATION LOGIC ---
   const applySettingsToAll = () => {
       const current = projects[activeIndex];
       if (!current) return;
 
+      const confirmed = window.confirm(`Deseja aplicar a edição da mídia atual (${current.file.name}) em todos os outros arquivos do mesmo tipo?`);
+      if (!confirmed) return;
+
       const updatedProjects = projects.map(p => {
           if (p.type === current.type) {
               if (current.type === AppMode.PHOTO) {
-                  return { ...p, layers: JSON.parse(JSON.stringify(current.layers)) };
+                  // Generate new IDs for layers to avoid reference conflicts
+                  const newLayers = current.layers.map(l => ({...l, id: Math.random().toString(36).substr(2, 9)}));
+                  return { 
+                      ...p, 
+                      layers: newLayers,
+                      initialized: true 
+                  };
               } else {
-                  return { ...p, videoConfig: { ...JSON.parse(JSON.stringify(current.videoConfig)) } };
+                  // Generate new IDs for video tags
+                  const newTags = current.videoConfig.tags.map(t => ({...t, id: Math.random().toString(36).substr(2, 9)}));
+                  return { 
+                      ...p, 
+                      videoConfig: { 
+                          ...current.videoConfig, 
+                          tags: newTags, // Fully replaced tags with new IDs
+                          blurLevel: current.videoConfig.blurLevel
+                          // Note: We do NOT copy trim times as videos have different lengths
+                      },
+                      initialized: true
+                  };
               }
           }
           return p;
@@ -168,12 +195,92 @@ const App: React.FC = () => {
       if (tg && tg.showPopup && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) {
           tg.showPopup({
               title: 'Sucesso',
-              message: 'Configurações aplicadas a todos os arquivos!',
+              message: `Configurações replicadas para ${updatedProjects.filter(p => p.type === current.type).length - 1} outros arquivos!`,
               buttons: [{type: 'ok'}]
           });
-      } else {
-          alert(`VIP: Configurações aplicadas a todos os arquivos!`);
       }
+  };
+
+  // --- BATCH PROCESSING QUEUE ---
+  const startBatchProcessing = async () => {
+      const videos = projects.filter(p => p.type === AppMode.VIDEO);
+      if (videos.length === 0) return;
+
+      const confirmed = await showConfirm(`Iniciar processamento em fila de ${videos.length} vídeos?\n\nO app processará um por um automaticamente.`);
+      if (!confirmed) return;
+
+      // Find index of first video
+      const firstVideoIndex = projects.findIndex(p => p.type === AppMode.VIDEO);
+      if (firstVideoIndex !== -1) {
+          setActiveIndex(firstVideoIndex);
+          setBatchQueueIndex(firstVideoIndex);
+      }
+  };
+
+  const handleBatchVideoComplete = () => {
+      if (batchQueueIndex === null) return;
+
+      // Find next video index
+      let nextIndex = -1;
+      for (let i = batchQueueIndex + 1; i < projects.length; i++) {
+          if (projects[i].type === AppMode.VIDEO) {
+              nextIndex = i;
+              break;
+          }
+      }
+
+      if (nextIndex !== -1) {
+          // Add a small delay to ensure UI updates before starting next
+          setTimeout(() => {
+              setActiveIndex(nextIndex);
+              setBatchQueueIndex(nextIndex);
+          }, 1000);
+      } else {
+          // Queue finished
+          setBatchQueueIndex(null);
+          const tg = window.Telegram?.WebApp;
+          if (tg && tg.showPopup && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) {
+              tg.showPopup({
+                  title: 'Fila Concluída',
+                  message: 'Todos os vídeos foram processados!',
+                  buttons: [{type: 'ok'}]
+              });
+          } else {
+              alert("Fila concluída!");
+          }
+      }
+  };
+
+  const applyPresetToAllVideos = () => {
+      const videoCount = projects.filter(p => p.type === AppMode.VIDEO).length;
+      if (videoCount === 0) return;
+
+      const confirmed = window.confirm(`Aplicar "Preset Montserrat 35px" em todos os ${videoCount} vídeos de uma vez? \nIsso substituirá as tags atuais.`);
+      if (!confirmed) return;
+
+      const updatedProjects = projects.map(p => {
+          if (p.type === AppMode.VIDEO) {
+             const newTag: VideoTag = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  text: '@SeuCanal',
+                  color: '#ffffff',
+                  fontSize: 35,
+                  fontFamily: 'Montserrat',
+                  speed: 4,
+                  opacity: 0.8
+              };
+              return {
+                  ...p,
+                  videoConfig: {
+                      ...p.videoConfig,
+                      tags: [newTag]
+                  },
+                  initialized: true
+              };
+          }
+          return p;
+      });
+      setProjects(updatedProjects);
   };
 
   const downloadAllPhotos = async () => {
@@ -340,6 +447,7 @@ const App: React.FC = () => {
   // --- RENDER MAIN APP ---
   const activeProject = projects[activeIndex];
   const photoProjectsCount = projects.filter(p => p.type === AppMode.PHOTO).length;
+  const videoProjectsCount = projects.filter(p => p.type === AppMode.VIDEO).length;
 
   return (
     <div className="min-h-screen bg-vip-black text-white flex flex-col font-sans h-[100dvh] overflow-hidden selection:bg-vip-green selection:text-black">
@@ -373,7 +481,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2 md:gap-3 relative z-50">
              {projects.length > 0 && (
                 <>
-                    {/* Botão de Download em Lote para Mobile/Desktop */}
+                    {/* Botão de Download em Lote para Fotos */}
                     {photoProjectsCount > 1 && (
                         <button 
                             onClick={downloadAllPhotos}
@@ -391,6 +499,23 @@ const App: React.FC = () => {
                             )}
                             <span className="hidden sm:inline">{isDownloading ? 'Processando...' : 'Enviar Tudo'}</span>
                         </button>
+                    )}
+
+                    {/* Botão de Fila para Vídeos */}
+                    {videoProjectsCount > 1 && batchQueueIndex === null && (
+                         <button 
+                            onClick={startBatchProcessing}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider text-vip-neon hover:text-white hover:bg-vip-neon/10 border border-vip-neon/20 hover:border-vip-neon/50 transition-all z-50 active:scale-95"
+                            title="Processar Fila"
+                        >
+                            <PlayCircle size={18} /> <span className="hidden sm:inline">Processar Fila</span>
+                        </button>
+                    )}
+                    
+                    {batchQueueIndex !== null && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-vip-green/10 border border-vip-green text-vip-green rounded-lg text-xs font-bold animate-pulse">
+                            <Loader2 size={16} className="animate-spin" /> Processando Fila...
+                        </div>
                     )}
 
                     <button 
@@ -466,7 +591,7 @@ const App: React.FC = () => {
             <aside className="w-72 bg-vip-dark border-r border-vip-border hidden md:flex flex-col flex-shrink-0 z-20 shadow-2xl">
                 <div className="p-5 border-b border-vip-border flex items-center justify-between bg-vip-black/20">
                     <div className="flex items-center gap-2 text-vip-neon font-bold text-sm tracking-wide">
-                        <LayoutDashboard size={16} /> DASHBOARD
+                        <Upload size={16} /> UPLOAD
                     </div>
                     <div className="relative group">
                          <input 
@@ -484,11 +609,9 @@ const App: React.FC = () => {
                 
                 <div className="p-3">
                     <button 
-                        onClick={downloadAllPhotos}
-                        disabled={isDownloading}
-                        className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold uppercase tracking-wider bg-vip-border/50 hover:bg-vip-border hover:text-white rounded-lg text-vip-gray border border-vip-border transition-all disabled:opacity-50">
-                        {isDownloading ? <Loader2 size={14} className="animate-spin"/> : <Send size={14} />} 
-                        {isDownloading ? 'Processando...' : 'Enviar Tudo'}
+                        onClick={applySettingsToAll}
+                        className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold uppercase tracking-wider bg-vip-border/50 hover:bg-vip-neon/10 hover:text-vip-neon rounded-lg text-vip-gray border border-vip-border hover:border-vip-neon/30 transition-all">
+                        <Copy size={14} /> REPLICAR EDIÇÃO (LOTE)
                     </button>
                 </div>
 
@@ -496,12 +619,14 @@ const App: React.FC = () => {
                     {projects.map((p, idx) => (
                         <div 
                             key={p.id}
-                            onClick={() => setActiveIndex(idx)}
+                            onClick={() => {
+                                if (batchQueueIndex === null) setActiveIndex(idx);
+                            }}
                             className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border relative overflow-hidden ${
                                 activeIndex === idx 
                                 ? 'bg-gradient-to-r from-vip-neon/10 to-transparent border-vip-neon/50' 
                                 : 'bg-transparent border-transparent hover:bg-vip-border/30'
-                            }`}
+                            } ${batchQueueIndex !== null && activeIndex !== idx ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             {activeIndex === idx && <div className="absolute left-0 top-0 bottom-0 w-1 bg-vip-neon"></div>}
                             
@@ -516,12 +641,19 @@ const App: React.FC = () => {
                                     {(p.file.size / 1024 / 1024).toFixed(2)} MB
                                 </p>
                             </div>
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); removeProject(idx); }}
-                                className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 hover:text-red-400 rounded-lg text-gray-500 transition-all"
-                            >
-                                <X size={14} />
-                            </button>
+                            {batchQueueIndex === null && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); removeProject(idx); }}
+                                    className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 hover:text-red-400 rounded-lg text-gray-500 transition-all"
+                                >
+                                    <X size={14} />
+                                </button>
+                            )}
+                            {batchQueueIndex !== null && idx === batchQueueIndex && (
+                                <div className="p-2">
+                                    <Loader2 size={14} className="animate-spin text-vip-green" />
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
@@ -541,7 +673,9 @@ const App: React.FC = () => {
                     {projects.map((p, idx) => (
                         <button
                             key={p.id}
-                            onClick={() => setActiveIndex(idx)}
+                            onClick={() => {
+                                if (batchQueueIndex === null) setActiveIndex(idx);
+                            }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap border transition-all ${
                                 activeIndex === idx 
                                 ? 'bg-vip-neon text-black border-vip-neon shadow-[0_0_10px_rgba(52,211,153,0.4)]' 
@@ -577,6 +711,9 @@ const App: React.FC = () => {
                                 project={activeProject} 
                                 onUpdate={updateProject}
                                 onApplyAll={applySettingsToAll}
+                                onApplyPresetAll={applyPresetToAllVideos}
+                                isAutoProcessing={batchQueueIndex === activeIndex}
+                                onAutoProcessDone={handleBatchVideoComplete}
                             />
                         ) : (
                             <PhotoEditor 

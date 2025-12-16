@@ -1,12 +1,15 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send } from 'lucide-react';
+import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send, Loader2, Grid3X3, RotateCcw, Zap } from 'lucide-react';
 import { Project, VideoConfig, VideoTag } from '../types';
 
 interface VideoEditorProps {
   project: Project;
   onUpdate: (updatedProject: Project) => void;
   onApplyAll: () => void;
+  onApplyPresetAll: () => void;
+  isAutoProcessing?: boolean;
+  onAutoProcessDone?: () => void;
 }
 
 const FONTS = [
@@ -22,13 +25,27 @@ interface PhysicsState {
     vy: number;
 }
 
-const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll }) => {
+const VideoEditor: React.FC<VideoEditorProps> = ({ 
+    project, 
+    onUpdate, 
+    onApplyAll, 
+    onApplyPresetAll, 
+    isAutoProcessing = false, 
+    onAutoProcessDone 
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number | null>(null);
   
+  // FIX: Use a ref to access the latest project state inside the animation loop
+  const projectRef = useRef(project);
+  useEffect(() => {
+      projectRef.current = project;
+  }, [project]);
+
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [activeTab, setActiveTab] = useState<'visual' | 'effects'>('visual');
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -40,6 +57,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
   // Physics state map: TagID -> Physics Properties
   const physicsRef = useRef<Map<string, PhysicsState>>(new Map());
 
+  // Use config from current prop for UI rendering, but ref for loop
   const { videoConfig } = project;
 
   // Initialize selected tag
@@ -56,7 +74,8 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       video.load();
       video.onloadedmetadata = () => {
           setDuration(video.duration);
-          if (videoConfig.trimEnd === 0) {
+          // If trimEnd is not set or invalid, set to full duration
+          if (videoConfig.trimEnd === 0 || videoConfig.trimEnd > video.duration) {
               updateConfig({ trimEnd: video.duration });
           }
       };
@@ -66,6 +85,18 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
   }, [project.file]);
+
+  // --- Auto Processing Trigger ---
+  useEffect(() => {
+      // Small delay to ensure video loaded metadata
+      if (isAutoProcessing && !isRecording && !isProcessing && duration > 0) {
+          const timer = setTimeout(() => {
+              console.log("Auto starting recording for", project.file.name);
+              startRecording();
+          }, 500);
+          return () => clearTimeout(timer);
+      }
+  }, [isAutoProcessing, duration]); // Depend on duration to ensure video is ready
 
   const updateConfig = (updates: Partial<VideoConfig>) => {
       onUpdate({
@@ -108,6 +139,58 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       setSelectedTagId(newTag.id);
   };
 
+  const addPresetTag = () => {
+      const newTag: VideoTag = {
+          id: Date.now().toString(),
+          text: '@SeuCanal',
+          color: '#ffffff',
+          fontSize: 35,
+          fontFamily: 'Montserrat',
+          speed: 4,
+          opacity: 0.8
+      };
+      updateConfig({ tags: [...videoConfig.tags, newTag] });
+      setSelectedTagId(newTag.id);
+  };
+
+  const scatterTags = (count: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      
+      // Template from current selection or default
+      const templateTag = selectedTagId 
+        ? videoConfig.tags.find(t => t.id === selectedTagId) 
+        : (videoConfig.tags.length > 0 ? videoConfig.tags[0] : null);
+
+      const text = templateTag ? templateTag.text : '@NovaTag';
+      const color = templateTag?.color || '#ffffff';
+      const fontSize = templateTag?.fontSize || 40;
+      const fontFamily = templateTag?.fontFamily || 'Outfit';
+      const speed = templateTag?.speed || 3;
+      const opacity = templateTag?.opacity || 0.8;
+
+      const newTags: VideoTag[] = [];
+      
+      for(let i=0; i<count; i++) {
+          newTags.push({
+              id: Date.now().toString() + Math.random() + i,
+              text,
+              color,
+              fontSize,
+              fontFamily,
+              speed,
+              opacity
+          });
+      }
+      
+      // Update config - REPLACE existing for clean slate
+      updateConfig({ tags: newTags });
+      
+      // Reset physics
+      physicsRef.current.clear();
+      if(newTags.length > 0) setSelectedTagId(newTags[0].id);
+  };
+
   const removeTag = (id: string) => {
       const newTags = videoConfig.tags.filter(t => t.id !== id);
       updateConfig({ tags: newTags });
@@ -118,16 +201,25 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       }
   };
 
+  const clearTags = () => {
+      updateConfig({ tags: [] });
+      physicsRef.current.clear();
+      setSelectedTagId(null);
+  };
+
   const renderFrame = () => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     
+    // Always use the LATEST config from ref
+    const currentConfig = projectRef.current.videoConfig;
+    
     if (canvas && video && !video.paused && !video.ended) {
       
-      // Handle Trim Loop
+      // Handle Trim Loop only when NOT recording
       if (!isRecording) {
-         if (video.currentTime >= videoConfig.trimEnd) {
-             video.currentTime = videoConfig.trimStart;
+         if (video.currentTime >= currentConfig.trimEnd) {
+             video.currentTime = currentConfig.trimStart;
          }
       }
 
@@ -135,14 +227,14 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       if (ctx) {
         ctx.save();
         
-        if (videoConfig.blurLevel > 0) {
-            ctx.filter = `blur(${videoConfig.blurLevel}px)`;
+        if (currentConfig.blurLevel > 0) {
+            ctx.filter = `blur(${currentConfig.blurLevel}px)`;
         }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         ctx.restore();
 
         // Process Tags Physics and Rendering
-        videoConfig.tags.forEach(tag => {
+        currentConfig.tags.forEach(tag => {
             let state = physicsRef.current.get(tag.id);
             
             // Initialize physics if missing
@@ -205,8 +297,10 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       
-      if (!isRecording && (video.currentTime < videoConfig.trimStart || video.currentTime >= videoConfig.trimEnd)) {
-          video.currentTime = videoConfig.trimStart;
+      const currentConfig = projectRef.current.videoConfig;
+      
+      if (!isRecording && (video.currentTime < currentConfig.trimStart || video.currentTime >= currentConfig.trimEnd)) {
+          video.currentTime = currentConfig.trimStart;
       }
       
       const playPromise = video.play();
@@ -232,34 +326,53 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
     
     chunksRef.current = [];
     
-    // Set Initial Time
+    // Set Initial Time carefully
     video.currentTime = videoConfig.trimStart;
-
-    const stream = canvas.captureStream(30);
+    
     // Audio setup
+    const stream = canvas.captureStream(30);
     const audioCtx = new AudioContext();
     const dest = audioCtx.createMediaStreamDestination();
     try {
+        // Create source only once or handle potential errors if it exists
+        // Ideally we keep audio context persistent, but for simplicity we recreate/connect here.
+        // If element source already connected, this might throw, so we wrap in try/catch or assume success
         const source = audioCtx.createMediaElementSource(video);
         source.connect(dest);
         const audioTrack = dest.stream.getAudioTracks()[0];
         if (audioTrack) stream.addTrack(audioTrack);
     } catch (e) {
-        // Ignore audio connect errors (already connected)
+        // Source already connected, which is fine
     }
 
     // Prepare Recorder
-    const mimeTypesToTry = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    // PRIORITIZE AAC (mp4a.40.2) to avoid Opus when using MP4
+    const mimeTypesToTry = [
+        'video/mp4;codecs=avc1,mp4a.40.2', // H.264 + AAC (Standard MP4)
+        'video/mp4;codecs=h264,aac',       // Alt AAC syntax
+        'video/mp4;codecs=avc1,opus',      // Fallback to Opus only if AAC fails
+        'video/mp4',                       // Generic MP4
+        'video/webm;codecs=vp9,opus',      // WebM Fallback
+        'video/webm'
+    ];
+    
     let mediaRecorder: MediaRecorder | null = null;
     let selectedMimeType = '';
 
     for (const type of mimeTypesToTry) {
         if (MediaRecorder.isTypeSupported(type)) {
-            mediaRecorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 25000000 });
+            // Request High Quality Audio (192kbps) to ensure clarity even if re-encoding happens
+            mediaRecorder = new MediaRecorder(stream, { 
+                mimeType: type, 
+                videoBitsPerSecond: 25000000,
+                audioBitsPerSecond: 192000 // 192kbps AAC/Opus
+            });
             selectedMimeType = type;
+            console.log("Selected MimeType:", type);
             break;
         }
     }
+    // Final fallback
     if (!mediaRecorder) mediaRecorder = new MediaRecorder(stream);
     
     mediaRecorderRef.current = mediaRecorder;
@@ -270,6 +383,10 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
 
     mediaRecorder.onstop = async () => {
       setIsProcessing(true);
+      
+      // Stop physics/rendering loop
+      handlePause();
+
       const isMp4 = selectedMimeType.includes('mp4');
       const blob = new Blob(chunksRef.current, { type: isMp4 ? 'video/mp4' : 'video/webm' });
       
@@ -277,6 +394,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
       const file = new File([blob], fileName, { type: isMp4 ? 'video/mp4' : 'video/webm' });
 
       // Tentar Compartilhamento Nativo (iOS/Android)
+      let shareSuccess = false;
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
           try {
               await navigator.share({
@@ -284,48 +402,71 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
                   title: 'Vivitag Vídeo',
                   text: 'Seu vídeo editado!'
               });
-              setIsRecording(false);
-              setIsProcessing(false);
-              handlePause();
-              return;
+              shareSuccess = true;
           } catch (e) {
               console.log("Share cancelado", e);
           }
       }
 
-      // Fallback
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
+      if (!shareSuccess) {
+           // Fallback
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          a.click();
+          URL.revokeObjectURL(url);
+      }
       
       setIsRecording(false);
       setIsProcessing(false);
-      handlePause();
+      setProgress(0);
+
+      // Trigger callback if auto processing
+      if (isAutoProcessing && onAutoProcessDone) {
+          // Add small delay to let browser finish saving UI logic
+          setTimeout(() => {
+              onAutoProcessDone();
+          }, 1000);
+      }
     };
 
     mediaRecorder.start();
     setIsRecording(true);
+    setProgress(0);
     
+    // Play video to capture frames
     video.play().catch(()=>{});
     renderFrame();
     
-    // Monitoring Loop
+    // Monitoring Loop for Stop Condition
+    const expectedDuration = videoConfig.trimEnd - videoConfig.trimStart;
+    
     const monitorInterval = setInterval(() => {
-        if (mediaRecorder?.state === 'inactive') {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
             clearInterval(monitorInterval);
             return;
         }
-        // Auto-stop at trim end
+        
+        const currentProgress = video.currentTime - videoConfig.trimStart;
+        const percent = Math.min(100, Math.max(0, (currentProgress / expectedDuration) * 100));
+        setProgress(percent);
+
+        // Precise Stop Condition
+        // We add a small buffer (0.1s) to ensure we don't cut off the very last frame too early
         if (video.currentTime >= videoConfig.trimEnd || video.ended) {
-            if (mediaRecorder?.state === 'recording') {
-                mediaRecorder.stop();
-            }
+            mediaRecorder.stop();
             clearInterval(monitorInterval);
         }
     }, 50);
+
+    // Safety Timeout: Force stop if it exceeds duration + 2 seconds (handles desync)
+    setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            console.warn("Safety timeout triggered for video recording");
+            mediaRecorder.stop();
+        }
+    }, (expectedDuration * 1000) + 2000);
   };
 
   const selectedTag = videoConfig.tags.find(t => t.id === selectedTagId);
@@ -333,24 +474,60 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
   return (
     <div className="flex flex-col lg:flex-row lg:h-full gap-6">
       {/* Canvas / Video Area */}
-      <div className="w-full flex-shrink-0 relative">
+      <div className="w-full lg:flex-1 relative flex-shrink-0 lg:flex-shrink flex-grow min-h-[300px]">
          {/* Content */}
-         <div className="w-full h-full glass-panel rounded-2xl flex items-center justify-center p-4 relative m-[1px]">
-            <video ref={videoRef} className="hidden" muted={false} crossOrigin="anonymous" />
-            {/* Added styling to limit height on mobile so user can see there is more content below */}
+         <div className="w-full h-full glass-panel rounded-2xl flex items-center justify-center p-4 relative m-[1px] min-h-[300px]">
+            {/* IMPORTANT: Video must NOT be display:none for captureStream to work reliably on some browsers. 
+                We use opacity-0 and pointer-events-none to hide it visually but keep it rendering. */}
+            <video 
+                ref={videoRef} 
+                className="absolute w-1 h-1 opacity-0 pointer-events-none" 
+                muted={false} 
+                crossOrigin="anonymous" 
+                playsInline
+            />
+            
             <canvas ref={canvasRef} className="max-w-full max-h-[50vh] lg:max-h-[70vh] shadow-xl rounded-lg border border-black" />
 
             {!videoRef.current?.src && (
-                <div className="text-vip-gray flex flex-col items-center animate-pulse py-12">
+                <div className="text-vip-gray flex flex-col items-center animate-pulse py-12 absolute inset-0 justify-center">
                     <Video size={48} className="mb-2 opacity-30"/>
                     <span className="text-sm font-medium tracking-wide">Carregando vídeo...</span>
+                </div>
+            )}
+
+            {/* Recording Overlay */}
+            {(isRecording || isProcessing) && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center z-50 rounded-2xl animate-fadeIn">
+                    <div className="w-16 h-16 relative mb-4">
+                        <div className="absolute inset-0 rounded-full border-4 border-vip-border"></div>
+                        <div className="absolute inset-0 rounded-full border-4 border-vip-neon border-t-transparent animate-spin"></div>
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-1">
+                        {isProcessing ? "Finalizando..." : "Processando Vídeo"}
+                    </h3>
+                    <p className="text-vip-gray text-xs max-w-[200px] text-center">
+                        {isProcessing 
+                            ? "Preparando arquivo para envio..." 
+                            : `Não feche esta tela.\n${Math.round(progress)}% concluído`}
+                        {isAutoProcessing && <br/>}
+                        {isAutoProcessing && <span className="text-vip-neon font-bold mt-1 block">MODO FILA AUTOMÁTICA</span>}
+                    </p>
+                    {!isProcessing && (
+                         <div className="w-48 h-1.5 bg-vip-border rounded-full mt-3 overflow-hidden">
+                             <div 
+                                className="h-full bg-vip-neon transition-all duration-200 ease-linear"
+                                style={{ width: `${progress}%` }}
+                             />
+                         </div>
+                    )}
                 </div>
             )}
          </div>
       </div>
 
       {/* Controls */}
-      <div className="w-full lg:w-96 flex flex-col glass-panel rounded-2xl h-auto lg:h-full lg:max-h-[85vh] overflow-visible lg:overflow-hidden">
+      <div className={`w-full lg:w-96 flex-shrink-0 flex flex-col glass-panel rounded-2xl h-auto lg:h-full lg:max-h-[85vh] overflow-visible lg:overflow-hidden ${isAutoProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
         
         {/* Tabs */}
         <div className="flex border-b border-vip-border bg-vip-dark/50 rounded-t-2xl">
@@ -371,16 +548,59 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
             
             {activeTab === 'visual' && (
                 <>
-                   {/* Tags List Management */}
-                   <div className="flex justify-between items-center mb-2">
+                   {/* Actions Header */}
+                   <div className="grid grid-cols-2 gap-3">
+                        <button 
+                            onClick={() => addTag()} 
+                            className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-all font-bold text-sm text-white border border-white/5">
+                            <Plus size={18} className="text-vip-green" /> Add Tag
+                        </button>
+                         <button 
+                            onClick={() => addPresetTag()} 
+                            className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-all font-bold text-xs text-white border border-white/5">
+                            <Zap size={16} className="text-yellow-400" /> Preset (Atual)
+                        </button>
+                   </div>
+                   
+                   {/* Batch Preset Button */}
+                   <button 
+                        onClick={onApplyPresetAll}
+                        className="w-full flex items-center justify-center gap-2 bg-vip-neon/20 hover:bg-vip-neon/30 text-vip-neon border border-vip-neon/50 p-3 rounded-xl transition-all font-bold text-xs uppercase tracking-wider shadow-[0_0_15px_rgba(52,211,153,0.1)]">
+                        <Zap size={16} fill="currentColor" /> Preset em TODOS (Lote)
+                   </button>
+
+                    {/* Scatter Tags Section - NOW ADDED TO VIDEO EDITOR */}
+                    <div className="bg-vip-black/50 p-3 rounded-xl border border-vip-border/50">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-[10px] text-vip-gray uppercase font-bold flex items-center gap-1">
+                                <Grid3X3 size={12}/> Multi-Tags Flutuantes
+                            </label>
+                            <button 
+                                onClick={clearTags}
+                                className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 hover:underline">
+                                <RotateCcw size={10} /> Limpar
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                            {[2, 5, 10, 15].map(count => (
+                                <button
+                                    key={count}
+                                    onClick={() => scatterTags(count)}
+                                    className="py-2 bg-vip-border hover:bg-vip-green hover:text-black rounded-lg text-xs font-bold transition-all border border-white/5"
+                                >
+                                    {count}x
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-2 text-center">
+                            Gera tags flutuantes aleatórias.
+                        </p>
+                    </div>
+                   
+                   <div className="flex justify-between items-center mb-2 mt-4">
                        <label className="text-xs font-bold text-vip-gray uppercase flex items-center gap-1">
                            <Layers size={12}/> Tags Ativas
                        </label>
-                       <button 
-                           onClick={addTag} 
-                           className="text-xs bg-vip-border hover:bg-vip-green hover:text-black text-white px-2 py-1 rounded transition-colors flex items-center gap-1">
-                           <Plus size={12}/> Nova
-                       </button>
                    </div>
                    
                    <div className="flex flex-col gap-2 max-h-32 overflow-y-auto pr-1 mb-4 custom-scrollbar">
@@ -578,7 +798,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
             <button 
                 onClick={onApplyAll}
                 className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-vip-border/50 p-2 rounded-lg transition-colors font-semibold text-xs text-vip-gray border border-vip-border border-dashed mb-3">
-                <Copy size={14} /> Replicar Config para TODOS
+                <Copy size={14} /> Replicar Config (Manual) para TODOS
             </button>
 
             <div className="grid grid-cols-2 gap-3 mb-3">
@@ -608,7 +828,9 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ project, onUpdate, onApplyAll
                 {isRecording ? (
                     <> <Square size={20} fill="currentColor" /> PARAR GRAVAÇÃO </>
                 ) : isProcessing ? (
-                    <>PROCESSANDO...</>
+                    <>
+                         <Loader2 size={20} className="animate-spin" /> PROCESSANDO...
+                    </>
                 ) : (
                     <> <Send size={20} /> GRAVAR E ENVIAR </>
                 )}

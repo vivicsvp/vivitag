@@ -52,6 +52,7 @@ export interface Project {
   layers: Layer[];       // For Photos
   videoConfig: VideoConfig; // For Videos
   caption?: string; // For AI Captions
+  initialized?: boolean; // Track if default tags have been added to prevent duplication
 }
 
 // Telegram WebApp Types
