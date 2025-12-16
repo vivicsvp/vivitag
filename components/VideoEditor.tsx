@@ -548,86 +548,88 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
             
             {activeTab === 'visual' && (
                 <>
-                   {/* Actions Header */}
-                   <div className="grid grid-cols-2 gap-3">
-                        <button 
+                   {/* Top Toolbar: Add / Preset / Scatter */}
+                   <div className="grid grid-cols-2 gap-3 mb-4">
+                         <button 
                             onClick={() => addTag()} 
-                            className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-all font-bold text-sm text-white border border-white/5">
-                            <Plus size={18} className="text-vip-green" /> Add Tag
+                            className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-all font-bold text-xs text-white border border-white/5">
+                            <Plus size={16} className="text-vip-green" /> Nova Tag
                         </button>
                          <button 
                             onClick={() => addPresetTag()} 
                             className="flex items-center justify-center gap-2 bg-vip-border hover:bg-white/10 p-3 rounded-xl transition-all font-bold text-xs text-white border border-white/5">
-                            <Zap size={16} className="text-yellow-400" /> Preset (Atual)
+                            <Zap size={16} className="text-yellow-400" /> + Preset
                         </button>
                    </div>
                    
                    {/* Batch Preset Button */}
                    <button 
                         onClick={onApplyPresetAll}
-                        className="w-full flex items-center justify-center gap-2 bg-vip-neon/20 hover:bg-vip-neon/30 text-vip-neon border border-vip-neon/50 p-3 rounded-xl transition-all font-bold text-xs uppercase tracking-wider shadow-[0_0_15px_rgba(52,211,153,0.1)]">
-                        <Zap size={16} fill="currentColor" /> Preset em TODOS (Lote)
+                        className="w-full flex items-center justify-center gap-2 bg-vip-neon/20 hover:bg-vip-neon/30 text-vip-neon border border-vip-neon/50 p-2 rounded-lg transition-all font-bold text-[10px] uppercase tracking-wider shadow-[0_0_15px_rgba(52,211,153,0.1)] mb-4">
+                        <Zap size={14} fill="currentColor" /> Preset em TODOS (Lote)
                    </button>
-
-                    {/* Scatter Tags Section - NOW ADDED TO VIDEO EDITOR */}
-                    <div className="bg-vip-black/50 p-3 rounded-xl border border-vip-border/50">
+                   
+                   {/* NEW: Chips / Buttons for Tags */}
+                   <div>
                         <div className="flex items-center justify-between mb-2">
-                            <label className="text-[10px] text-vip-gray uppercase font-bold flex items-center gap-1">
-                                <Grid3X3 size={12}/> Multi-Tags Flutuantes
+                             <label className="text-xs font-bold text-vip-gray uppercase flex items-center gap-1">
+                                <Layers size={12}/> Tags (Clique para editar)
                             </label>
-                            <button 
-                                onClick={clearTags}
-                                className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 hover:underline">
-                                <RotateCcw size={10} /> Limpar
-                            </button>
+                            {videoConfig.tags.length > 0 && (
+                                <button onClick={clearTags} className="text-[10px] text-red-400 hover:underline">Limpar Tudo</button>
+                            )}
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
-                            {[2, 5, 10, 15].map(count => (
-                                <button
-                                    key={count}
-                                    onClick={() => scatterTags(count)}
-                                    className="py-2 bg-vip-border hover:bg-vip-green hover:text-black rounded-lg text-xs font-bold transition-all border border-white/5"
-                                >
-                                    {count}x
-                                </button>
+                        
+                        <div className="flex flex-wrap gap-2 mb-2">
+                            {videoConfig.tags.map(tag => (
+                                <div key={tag.id} className="relative group">
+                                    <button
+                                        onClick={() => setSelectedTagId(tag.id)}
+                                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all flex items-center gap-2 max-w-[150px] ${
+                                            selectedTagId === tag.id
+                                            ? 'ring-2 ring-vip-green ring-offset-1 ring-offset-vip-black'
+                                            : 'hover:opacity-80'
+                                        }`}
+                                        style={{ 
+                                            backgroundColor: tag.color, 
+                                            color: '#000', // Contrast might vary, sticking to black for chips often works or calculated contrast. Simplified here.
+                                            borderColor: tag.color,
+                                            fontFamily: tag.fontFamily || 'Outfit'
+                                        }}
+                                    >
+                                        <span className="truncate">{tag.text}</span>
+                                    </button>
+                                    {/* Delete Tag Button overlay */}
+                                    {selectedTagId === tag.id && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); removeTag(tag.id); }}
+                                            className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 shadow-md transform scale-0 group-hover:scale-100 transition-transform"
+                                            title="Remover Tag"
+                                        >
+                                            <Trash2 size={10} />
+                                        </button>
+                                    )}
+                                </div>
                             ))}
+                            {videoConfig.tags.length === 0 && (
+                                <span className="text-xs text-vip-gray italic py-1">Nenhuma tag...</span>
+                            )}
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-2 text-center">
-                            Gera tags flutuantes aleatórias.
-                        </p>
+                   </div>
+
+                    {/* Scatter Controls Compact */}
+                    <div className="bg-vip-black/30 p-2 rounded-lg border border-vip-border/30 mb-4 flex items-center gap-2">
+                        <span className="text-[10px] text-vip-gray uppercase font-bold flex-shrink-0"><Grid3X3 size={10} className="inline mr-1"/>Auto:</span>
+                        {[2, 5, 10, 15].map(count => (
+                            <button
+                                key={count}
+                                onClick={() => scatterTags(count)}
+                                className="flex-1 py-1 bg-vip-border hover:bg-vip-green hover:text-black rounded text-[10px] font-bold transition-all border border-white/5"
+                            >
+                                {count}x
+                            </button>
+                        ))}
                     </div>
-                   
-                   <div className="flex justify-between items-center mb-2 mt-4">
-                       <label className="text-xs font-bold text-vip-gray uppercase flex items-center gap-1">
-                           <Layers size={12}/> Tags Ativas
-                       </label>
-                   </div>
-                   
-                   <div className="flex flex-col gap-2 max-h-32 overflow-y-auto pr-1 mb-4 custom-scrollbar">
-                       {videoConfig.tags.map(tag => (
-                           <div 
-                               key={tag.id}
-                               onClick={() => setSelectedTagId(tag.id)}
-                               className={`flex items-center justify-between p-2 rounded-lg cursor-pointer border ${
-                                   selectedTagId === tag.id 
-                                   ? 'bg-vip-green/10 border-vip-green text-white' 
-                                   : 'bg-vip-black border-vip-border text-gray-400 hover:bg-vip-border/30'
-                               }`}
-                           >
-                               <span className="truncate text-sm font-medium" style={{ fontFamily: tag.fontFamily || 'Outfit' }}>
-                                   {tag.text}
-                               </span>
-                               <button 
-                                   onClick={(e) => { e.stopPropagation(); removeTag(tag.id); }}
-                                   className="text-gray-500 hover:text-red-400 p-1">
-                                   <Trash2 size={12} />
-                               </button>
-                           </div>
-                       ))}
-                       {videoConfig.tags.length === 0 && (
-                           <p className="text-xs text-center text-gray-500 py-2">Nenhuma tag adicionada.</p>
-                       )}
-                   </div>
 
                     {selectedTag ? (
                         <div className="animate-fadeIn space-y-4 border-t border-vip-border pt-4">
@@ -727,7 +729,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
                         </div>
                     ) : (
                         <div className="text-center p-4 border border-dashed border-vip-border rounded-lg text-gray-500 text-xs">
-                            Selecione uma tag para editar ou crie uma nova.
+                            Selecione uma tag acima para editar.
                         </div>
                     )}
                 </>
