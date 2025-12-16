@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send, Loader2, Grid3X3, RotateCcw, Zap } from 'lucide-react';
+import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send, Loader2, Grid3X3, Zap } from 'lucide-react';
 import { Project, VideoConfig, VideoTag } from '../types';
 
 interface VideoEditorProps {
