@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send, Loader2, Grid3X3, Zap } from 'lucide-react';
+import { Play, Square, Video, Settings2, Copy, EyeOff, Type, Plus, Trash2, Layers, ChevronDown, Send, Loader2, Grid3X3, Zap, Download, X } from 'lucide-react';
 import { Project, VideoConfig, VideoTag } from '../types';
 
 interface VideoEditorProps {
@@ -50,6 +50,11 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
   const [activeTab, setActiveTab] = useState<'visual' | 'effects'>('visual');
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [showFontDropdown, setShowFontDropdown] = useState(false);
+  
+  // NEW: State for finished video ready to download manually
+  const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
+  const [downloadFileName, setDownloadFileName] = useState<string>('');
+  const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -278,7 +283,8 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
             // Render Text
             ctx.save();
             ctx.globalAlpha = tag.opacity;
-            ctx.font = `bold ${tag.fontSize}px "${tag.fontFamily}", sans-serif`;
+            // REMOVED FORCED BOLD
+            ctx.font = `${tag.fontSize}px "${tag.fontFamily}", sans-serif`;
             ctx.fillStyle = tag.color;
             ctx.shadowColor = 'rgba(0,0,0,0.5)';
             ctx.shadowBlur = 4;
@@ -316,6 +322,36 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
   };
 
+  const handleManualDownload = async () => {
+      if (!downloadBlob) return;
+      
+      const file = new File([downloadBlob], downloadFileName, { type: downloadBlob.type });
+
+      // 1. Try Native Share (Best for Mobile)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+              await navigator.share({
+                  files: [file],
+                  title: 'Vivitag Vídeo',
+                  text: 'Seu vídeo editado!'
+              });
+              return;
+          } catch (e) {
+              console.log("Share skipped/cancelled", e);
+          }
+      }
+
+      // 2. Fallback to Direct Link Download
+      if (downloadReadyUrl) {
+          const a = document.createElement('a');
+          a.href = downloadReadyUrl;
+          a.download = downloadFileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+      }
+  };
+
   const startRecording = () => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -323,6 +359,8 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
 
     // Reset Physics for a clean start
     physicsRef.current.clear();
+    setDownloadReadyUrl(null); // Clear previous recordings
+    setDownloadBlob(null);
     
     chunksRef.current = [];
     
@@ -334,9 +372,6 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
     const audioCtx = new AudioContext();
     const dest = audioCtx.createMediaStreamDestination();
     try {
-        // Create source only once or handle potential errors if it exists
-        // Ideally we keep audio context persistent, but for simplicity we recreate/connect here.
-        // If element source already connected, this might throw, so we wrap in try/catch or assume success
         const source = audioCtx.createMediaElementSource(video);
         source.connect(dest);
         const audioTrack = dest.stream.getAudioTracks()[0];
@@ -346,13 +381,11 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
     }
 
     // Prepare Recorder
-    // PRIORITIZE AAC (mp4a.40.2) to avoid Opus when using MP4
     const mimeTypesToTry = [
-        'video/mp4;codecs=avc1,mp4a.40.2', // H.264 + AAC (Standard MP4)
-        'video/mp4;codecs=h264,aac',       // Alt AAC syntax
-        'video/mp4;codecs=avc1,opus',      // Fallback to Opus only if AAC fails
-        'video/mp4',                       // Generic MP4
-        'video/webm;codecs=vp9,opus',      // WebM Fallback
+        'video/mp4;codecs=avc1,mp4a.40.2', 
+        'video/mp4;codecs=h264,aac',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
         'video/webm'
     ];
     
@@ -361,18 +394,15 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
 
     for (const type of mimeTypesToTry) {
         if (MediaRecorder.isTypeSupported(type)) {
-            // Request High Quality Audio (192kbps) to ensure clarity even if re-encoding happens
             mediaRecorder = new MediaRecorder(stream, { 
                 mimeType: type, 
                 videoBitsPerSecond: 25000000,
-                audioBitsPerSecond: 192000 // 192kbps AAC/Opus
+                audioBitsPerSecond: 192000
             });
             selectedMimeType = type;
-            console.log("Selected MimeType:", type);
             break;
         }
     }
-    // Final fallback
     if (!mediaRecorder) mediaRecorder = new MediaRecorder(stream);
     
     mediaRecorderRef.current = mediaRecorder;
@@ -383,51 +413,44 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
 
     mediaRecorder.onstop = async () => {
       setIsProcessing(true);
-      
-      // Stop physics/rendering loop
       handlePause();
 
       const isMp4 = selectedMimeType.includes('mp4');
       const blob = new Blob(chunksRef.current, { type: isMp4 ? 'video/mp4' : 'video/webm' });
-      
       const fileName = `vivitag-clip-${project.file.name.split('.')[0]}.${isMp4 ? 'mp4' : 'webm'}`;
-      const file = new File([blob], fileName, { type: isMp4 ? 'video/mp4' : 'video/webm' });
-
-      // Tentar Compartilhamento Nativo (iOS/Android)
-      let shareSuccess = false;
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          try {
-              await navigator.share({
-                  files: [file],
-                  title: 'Vivitag Vídeo',
-                  text: 'Seu vídeo editado!'
-              });
-              shareSuccess = true;
-          } catch (e) {
-              console.log("Share cancelado", e);
-          }
-      }
-
-      if (!shareSuccess) {
-           // Fallback
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          a.click();
-          URL.revokeObjectURL(url);
-      }
       
-      setIsRecording(false);
-      setIsProcessing(false);
-      setProgress(0);
+      if (isAutoProcessing) {
+          // --- AUTO MODE (QUEUE) ---
+          // Attempt automatic fallback download/share but don't block queue
+          const file = new File([blob], fileName, { type: isMp4 ? 'video/mp4' : 'video/webm' });
+          
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try { await navigator.share({ files: [file], title: 'Vivitag Video' }); } catch(e){}
+          } else {
+             // Fallback auto-click (might be blocked on mobile, but queue continues)
+             const url = URL.createObjectURL(blob);
+             const a = document.createElement('a');
+             a.href = url;
+             a.download = fileName;
+             a.click();
+             setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }
 
-      // Trigger callback if auto processing
-      if (isAutoProcessing && onAutoProcessDone) {
-          // Add small delay to let browser finish saving UI logic
-          setTimeout(() => {
-              onAutoProcessDone();
-          }, 1000);
+          setIsRecording(false);
+          setIsProcessing(false);
+          setProgress(0);
+          if (onAutoProcessDone) setTimeout(() => onAutoProcessDone(), 1000);
+      } else {
+          // --- MANUAL MODE (USER INTERACTION REQUIRED) ---
+          // Show "Ready" Modal to force user click (bypasses popup blockers)
+          const url = URL.createObjectURL(blob);
+          setDownloadBlob(blob);
+          setDownloadFileName(fileName);
+          setDownloadReadyUrl(url);
+          
+          setIsRecording(false);
+          setIsProcessing(false);
+          setProgress(0);
       }
     };
 
@@ -435,11 +458,9 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
     setIsRecording(true);
     setProgress(0);
     
-    // Play video to capture frames
     video.play().catch(()=>{});
     renderFrame();
     
-    // Monitoring Loop for Stop Condition
     const expectedDuration = videoConfig.trimEnd - videoConfig.trimStart;
     
     const monitorInterval = setInterval(() => {
@@ -452,18 +473,14 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
         const percent = Math.min(100, Math.max(0, (currentProgress / expectedDuration) * 100));
         setProgress(percent);
 
-        // Precise Stop Condition
-        // We add a small buffer (0.1s) to ensure we don't cut off the very last frame too early
         if (video.currentTime >= videoConfig.trimEnd || video.ended) {
             mediaRecorder.stop();
             clearInterval(monitorInterval);
         }
     }, 50);
 
-    // Safety Timeout: Force stop if it exceeds duration + 2 seconds (handles desync)
     setTimeout(() => {
         if (mediaRecorder && mediaRecorder.state === 'recording') {
-            console.warn("Safety timeout triggered for video recording");
             mediaRecorder.stop();
         }
     }, (expectedDuration * 1000) + 2000);
@@ -477,8 +494,6 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
       <div className="w-full lg:flex-1 relative flex-shrink-0 lg:flex-shrink flex-grow min-h-[300px]">
          {/* Content */}
          <div className="w-full h-full glass-panel rounded-2xl flex items-center justify-center p-4 relative m-[1px] min-h-[300px]">
-            {/* IMPORTANT: Video must NOT be display:none for captureStream to work reliably on some browsers. 
-                We use opacity-0 and pointer-events-none to hide it visually but keep it rendering. */}
             <video 
                 ref={videoRef} 
                 className="absolute w-1 h-1 opacity-0 pointer-events-none" 
@@ -521,6 +536,36 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
                              />
                          </div>
                     )}
+                </div>
+            )}
+
+            {/* DOWNLOAD READY MODAL - Manual Mode Only */}
+            {!isAutoProcessing && downloadReadyUrl && (
+                <div className="absolute inset-0 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center z-50 rounded-2xl animate-fadeIn p-6 text-center">
+                    <div className="w-16 h-16 bg-vip-green/20 rounded-full flex items-center justify-center mb-4 border border-vip-green/50 shadow-[0_0_20px_rgba(52,211,153,0.3)]">
+                        <Send size={32} className="text-vip-green" />
+                    </div>
+                    <h3 className="text-2xl font-bold text-white mb-2">Vídeo Pronto!</h3>
+                    <p className="text-vip-gray text-sm mb-6 max-w-xs">
+                        Seu vídeo foi processado com sucesso. Clique abaixo para salvar.
+                    </p>
+                    
+                    <button 
+                        onClick={handleManualDownload}
+                        className="w-full max-w-xs py-4 glass-btn-green font-bold text-lg mb-3 flex items-center justify-center gap-2"
+                    >
+                        <Download size={20} /> BAIXAR / COMPARTILHAR
+                    </button>
+                    
+                    <button 
+                        onClick={() => {
+                            setDownloadReadyUrl(null);
+                            setDownloadBlob(null);
+                        }}
+                        className="text-vip-gray text-xs hover:text-white mt-2 flex items-center gap-1"
+                    >
+                        <X size={12} /> Fechar e voltar
+                    </button>
                 </div>
             )}
          </div>

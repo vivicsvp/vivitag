@@ -88,7 +88,8 @@ const PhotoEditor: React.FC<PhotoEditorProps> = ({ project, onUpdate, onApplyAll
       if (layer.type === LayerType.TEXT) {
         // Use the layer's font family or default to Outfit
         const fontFamily = layer.fontFamily || 'Outfit';
-        ctx.font = `bold ${layer.fontSize}px "${fontFamily}", sans-serif`;
+        // REMOVED FORCED BOLD
+        ctx.font = `${layer.fontSize}px "${fontFamily}", sans-serif`;
         ctx.fillStyle = layer.color || '#ffffff';
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'center';
